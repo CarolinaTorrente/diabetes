@@ -1,0 +1,542 @@
+---
+title: "P1-Statistical Learning"
+output: html_document
+date: "2022-10-27"
+author: "Carolina Torrente Vélez"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## INTRODUCTION
+
+Before starting with the entire work, we are going to introduce the personal motivation where we explain why we have chosen the data set.
+
+Nowadays, an estimated 34.2 million people have diabetes, 1 out of 3 adults is an excessive drinker, more and more people is having mental problems, we move and exercise less than ever and a percentage of the population can't see a doctor when they need it because of the cost. We are dealing with a lot of problems that are decreasing our quality of life.
+Therefore, through this study, we want to analyse the possible relations between these facts lately mentioned which have been measured in a survey with another 17 different variables related with the main topic (Global Health).
+
+During the different unsupervised analysis that we are going to make, we will describe all the variables but if you want to read a previous explanation go to: https://www.kaggle.com/datasets/alexteboul/diabetes-health-indicators-dataset (source where we obtained the data but we took only 1200 observations approx.)
+
+Questions:
+
+Which could be the subset of variables that indicate a better health for any individual?
+
+After PCA is there any difference between having diabetes or not taking to account the groups where they belong? 
+
+Could the answers of the last 2 questions change if we create 2 new variables and apply Factor Analysis?
+
+Are the subgroups created with clustering associated between them in terms of quality of life?
+
+
+
+## I) Data preprocessing
+
+
+```{r,  echo=FALSE}
+rm(list=ls()) 
+
+library(tidyverse)
+library(VIM)
+library(Quandl)
+library(VIM)
+library(lubridate)
+library(GGally)
+library(factoextra)
+library(quantmod)
+library(mice)
+```
+
+1) Dealing with missing values
+
+```{r cars}
+data = read.csv("diabetes.csv")
+summary(data)
+anyNA(data)
+
+aggr(data, plot=T, ylab= c('Missing data','Pattern'))
+```
+
+We notice missing values for BMI. In addition, there exist a missing value for mental health which is a scale between 1 and 30 that represents the number of days where our mental health was not good during the past 30 days. Mental health includes stress, depression, and problems with emotions.
+For the missing values of the variable Sex (0= female, male=1), we replace it with the most common observation. We see the mean is 0.3597 so we replace them with 0.
+
+```{r}
+# replace some NAs:
+mean(data$BMI, na.rm = TRUE)
+data$BMI[is.na(data$BMI)]=mean(data$BMI,na.rm=TRUE)
+data$MentHlth[is.na(data$MentHlth)]=mean(data$MentHlth,na.rm=TRUE)
+data$Sex[is.na(data$Sex)]= 0
+
+anyNA(data)
+```
+
+2) Analysing the type of data 
+
+Now, we analyse the type of data. We transform into factors all categorical variables.
+
+```{r}
+data$Diabetes_012 = as.factor(data$Diabetes_012)
+data$HighBP = as.factor(data$HighBP)
+data$HighChol = as.factor(data$HighChol)
+data$CholCheck= as.factor(data$CholCheck)
+data$Smoker = as.factor(data$Smoker)
+data$Stroke = as.factor(data$Stroke)
+data$HeartDiseaseorAttack = as.factor(data$HeartDiseaseorAttack)
+data$PhysActivity = as.factor(data$PhysActivity)
+data$Fruits = as.factor(data$Fruits)
+data$Veggies = as.factor(data$Veggies)
+data$HvyAlcoholConsump = as.factor(data$HvyAlcoholConsump)
+data$AnyHealthcare = as.factor(data$AnyHealthcare)
+data$NoDocbcCost = as.factor(data$NoDocbcCost)
+data$Sex = as.factor(data$Sex)
+data$DiffWalk = as.factor(data$DiffWalk)
+str(data)
+
+```
+For the vast majority of categorical variables we have 1 or 2 instead of 0 or 1. Diabetes has levels 1, 2 and 3.
+
+Mental Health and BMI are also integers:
+
+```{r}
+data$MentHlth= as.integer(data$MentHlth)
+data$BMI= as.integer(data$BMI)
+```
+
+3) Outliers and distribution of some variables
+
+We plot boxplots and histograms for the variables that are not scaled (BMI, mental heath and Physical Health) to see how is the distribution.
+
+```{r}
+library(ggplot2)
+
+summary(data$PhysHlth)
+boxplot(data$PhysHlth, col="#7FFFD4", varwidth=T)
+```
+
+There are no outliers for this variable. Let's see for BMI:
+
+```{r}
+library(ggplot2)
+boxplot.stats(data$BMI)
+
+ggplot() + aes(x=data$BMI)+geom_boxplot(size=0.2, outlier.color = "red", color="black",fill="azure1")+
+  labs(fill= "bmi")+theme(text=element_text(size=0.6))
+#we observe that all values exceeding the number 45 are outliers
+#we can see it also using the IQR METHOD
+QI <- quantile(data$BMI, 0.25)
+QS <- quantile(data$BMI, 0.75)
+IQR = QS-QI
+outliers = sum(data$BMI < QI - 1.5*IQR | data$BMI > QS + 1.5*IQR)
+#we remove 41 outliers
+data = data[data$BMI<=45,]
+
+ ggplot() + aes(data$BMI)+
+geom_histogram(color="black",fill="orchid1", bins=30)
+```
+
+For BMI we removed the outliers. Nevertheless, we are going to include them for our Factor Analysis (III) and Clustering (IV). We only keep them for PCA (II). Why?
+Well, having a BMI greater than 45 is something that can easily occur in terms of the total population, so we think it is interesting to include all the information of the data set. (check bibliography. Judith Rodin).
+
+We continue with Mental Health variable.
+
+```{r}
+summary(data$MentHlth)
+boxplot(data$MentHlth, col = "#FFE1FF")
+#keep values lower or equal to 10 
+data=data[data$MentHlth<=10,]
+ ggplot() + aes(data$MentHlth)+
+geom_histogram(color="black",fill="orchid1", bins=30)
+```
+
+We observe the majority of the observations have any day where their mental health was not good during the past 30 days (including stress, depression, and problems with emotions). We have only removed the values exceeding 10 bad days. But again, these outliers will be included for FA (III) and Clustering (IV).
+
+
+The following variables are scaled. We have also computed all the different analysis (II, III, IV) making fewer groups for each variable in order to reduce the noise. However, the results were the similar. Therefore, we prefer to keep the data as it was and store as much information as possible.
+
+thirteen-level AGE category
+-	1: Age 18 to 24
+•	2 Age 25 to 29
+•	3 Age 30 to 34
+•	4 Age 35 to 39
+•	5 Age 40 to 44
+•	6 Age 45 to 49
+•	7 Age 50 to 54
+•	8 Age 55 to 59
+•	9 Age 60 to 64
+•	10 Age 65 to 69
+•	11 Age 70 to 74
+•	12 Age 75 to 79
+•	13 Age 80 or older
+
+EDUCATION-What is the highest grade or year of school you completed? 
+•	1 Never attended school or only kindergarten
+•	2 Grades 1 through 8 (Elementary)
+•	3 Grades 9 through 11 (Some high school)
+•	4 Grade 12 or GED (High school graduate)
+•	5 College 1 year to 3 years (Some college or technical school)
+•	6 College 4 years or more (College graduate)
+
+INCOME variable->Is your annual household income from all sources
+•	1: Less than $10,000
+•	2 Less than $15,000 ($10,000 to less than $15,000)
+•	3 Less than $20,000 ($15,000 to less than $20,000)
+•	4 Less than $25,000 ($20,000 to less than $25,000)
+•	5 Less than $35,000 ($25,000 to less than $35,000)
+•	6 Less than $50,000 ($35,000 to less than $50,000)
+•	7 Less than $75,000 ($50,000 to less than $55,000)
+• 8 more than $75,000 
+
+
+## II) PCA
+
+```{r,  echo=FALSE}
+library(tidyverse)
+library(GGally) # ggplot2-based visualization of correlations
+library(factoextra) # ggplot2-based visualization of pca
+library(FactoMineR)
+```
+
+```{r}
+# we need numerical variables for PCA
+data$Income = as.numeric(data$Income)
+data$Diabetes_012 = as.numeric(data$Diabetes_012)
+data$BMI = as.numeric(data$BMI)
+data$Age = as.numeric(data$Age)
+data$PhysHlth= as.numeric(data$PhysHlth)
+df = subset(data, select=c(BMI, Income, PhysHlth, Age))
+resultspcsa = prcomp(df, scale=T)
+summary(resultspcsa)
+```
+```{r}
+#we create a matrix with results of our pca
+df1 = df
+xx=resultspcsa$x
+xx= as.data.frame(xx)
+df1$PC1 = xx$PC1
+df1$PC2 = xx$PC2
+df1$PC3 = xx$PC3
+df1$PC4 = xx$PC4
+#df1$PC5 = xx$PC5
+# we want to observe the correlation between pca obtained
+cor(df1)
+```
+
+We visualize the eigenvalues. Note with 2 components we explain more than 65% of the variability (see screeplot below). The number of a row in the dataset represents an individual. Graph of individuals is the one with black points. We also have represented individuals and PC together but this is just a quit insight, then we will make better plots to interpret the results.
+
+```{r}
+pca2 <- PCA(df, scale.unit = T, ncp = 4, graph = TRUE)
+
+print(pca2)
+head(pca2$eig)
+# scree plot:
+fviz_screeplot(pca2, addlabels = TRUE)
+#Representation of the observations for princ. comp. 
+fviz_pca_ind(pca2,
+             col.ind = "cos2", # Color by the quality of representation
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = FALSE)    # Avoid text overlapping
+```
+
+With the following graph we can see how is the contribution of the variables and principal components.
+
+```{r}
+#Representation of variables and principal components:
+fviz_pca_var(pca2,
+             col.var = "contrib", # Color by contributions to the PCA
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE)# TO avoid text overlapping
+
+```
+
+```{r}
+fviz_contrib(pca2, choice = "var", axes = 1)
+```
+
+
+We can see Income and Physical Health are the variables that contribute the most to dimension 1. Remember, Physical Health is how many days during the past 30 days was their physical health not good.
+
+Now, we use bigplot in order to visualize variables and individuals, and we select the 40 first observations that contributed the most
+
+```{r}
+fviz_pca_biplot(pca2, repel = TRUE,
+                geom= "point",
+                col.var = "purple", # Variables color
+                col.ind = "orange", # Individuals color
+                select.ind = list(contrib = 40))
+```
+
+
+```{r}
+#we create a new object to see whether they have diabetes or not
+group = as.factor(data$Diabetes_012)
+library(ggbiplot)
+ggbiplot(pca2, ellipse=T, groups=group)
+fviz_pca_biplot(pca2, col.ind=group,
+                palette = c("pink","#FC4E07","#00AFBB"),addEllipses = T,lengend.title="Diabetes",repel=F)
+```
+
+
+PCA was better for 1 and 2, therefore the others are not represented in the last bigplot.
+
+We know with PCA we are not studying whether some variables contribute to a single one that in this case could be diabetes. Since it is an unsupervised tool, we want to reduce the dimensionality of our data set to see the how some variables could be related forming one group. We remarked Income and Physical health could be a subset contributing to one group and the same for Age and BMI for another.
+By observing the 3 circles in the graph where PC1 and PC2 are standardised, we can notice that those that are in the left hand side and marked with red haven't diabetes. On the contrary, in blue and on in the right hand side, we see those individuals having diabetes. So, the distribution of diabetes depending on PC1 or PC2 is a little bit different. (but we cannot conclude Income is linked to not having diabetes).
+
+
+## III) Factor analysis
+
+We remove everything and replace missing values again. This time, we keep the "outliers".
+
+```{r}
+rm(list=ls()) 
+data = read.csv("diabetes.csv")
+summary(data)
+anyNA(data)
+
+# replace some NAs:
+mean(data$BMI, na.rm = TRUE)
+data$BMI[is.na(data$BMI)]=mean(data$BMI,na.rm=TRUE)
+mean(data$MentHlth, na.rm = TRUE)
+data$MentHlth[is.na(data$MentHlth)]=mean(data$MentHlth,na.rm=TRUE)
+data$Sex[is.na(data$Sex)]= 0
+
+anyNA(data)
+```
+Since we want numeric data to do the factor analysis, we are going to create 2 new columns to replace those variables that are 0 or 1. Although we know these variables will be interpreted as numeric, we want to reduce the time and space required to process the data as well as increasing the precision (see bibliography, investigation of  M. Usman Ali and collaborators)
+
+The first variable is going to be the sum of bad habits or bad things that have occurred to the individual:
+- high blood pressure: 1 means the person has high blood pressure
+- high cholesterol
+- smoke: The person smoked at least 100 cigarettes in his entire life [5 packs = 100 cigarettes] 0 = no, 1 = yes
+- stroke: 1 means he had a stroke
+- heart disease attack
+- heavy alcohol consumption: Heavy drinkers (adult men having more than 14 drinks per week and adult women having more than 7 drinks per week) 0 = no 1 = yes
+- No doctor cost: it means there was a time in the past 12 months where he needed to see a doctor but could not afford it
+- DiffWalk: serious difficulty walking or climbing stairs (1=yes,0=no)
+
+Then we remove the variables that have been replaced.
+```{r}
+data$Badthings =rowSums(data [,c(2,3,6,7,8,12,14,18)])
+data$HighBP=NULL
+data$HighChol= NULL
+data$Smoker=NULL
+data$Stroke=NULL
+data$HeartDiseaseorAttack=NULL
+data$HvyAlcoholConsump=NULL
+data$NoDocbcCost=NULL
+data$DiffWalk=NULL
+```
+
+The second new variable is going to be the sum of good things:
+- Cholcheck: 0 = no cholesterol check in 5 years and 1=yes. So we sum if there is at least 1 check
+- physActivity:physical activity in past 30 days - not including job 0 = no 1 = yes
+- fruits: Consume Fruit 1 or more times per day 0 = no 1 = yes
+- veggies: Consume Vegetables 1 or more times per day 0 = no 1 = yes
+- any health care: Have any kind of health care coverage, including health insurance, prepaid plans such as HMO
+```{r}
+#notice now the columns correspond to differente numers because we have removed some variables
+data$Goodthings =  rowSums(data [, c (2,4,5,6,7)])
+data$CholCheck= NULL
+data$PhysActivity=NULL
+data$Fruits=NULL
+data$Veggies=NULL
+data$AnyHealthcare=NULL
+# we are going to remove also sex var. since the results are better when it is not included
+data$Sex=NULL
+```
+
+Now, we want to see if there exist correlation between the variables before starting our factor analysis. We are also going to plot a sedimentation graph that shows us the number of the principal component vs its corresponding value. 
+```{r}
+R = cor(data[,1:10])
+#R 
+
+e=eigen(R)$val
+plot(e, type="b", pch=20, col="blue", main="Sedimentation graph", xlab="nº of components",ylab="eigenvalue")
+abline(h=1, v=2, col="red")
+```
+
+
+We observe that with the second factor the slope changes drastically. the work of Kristopher J. Preacher &Robert C. MacCallum suggest us that we should choose the number of factors for which eigen value is greater than 1. (check bibliography). Therefore, we are going to select 4 factors and see what happens.
+
+
+```{r}
+library(psych)
+facto=principal(data,nfactors=4, rotate="none")
+cbind(facto$loadings, facto$uniquenesses)
+```
+The var explained by first 4 factors is between 40% and 94% approx.
+
+#Interpretation
+
+```{r}
+
+par(mfrow=c(1,1))
+barplot(facto$loadings[,1], names=F, las=2, col="pink", ylim = c(-1, 1))
+barplot(facto$loadings[,2], names=F, las=2, col="pink", ylim = c(-1, 1))
+barplot(facto$loadings[,3], las=2, col="pink", ylim = c(-1, 1))
+barplot(facto$loadings[,4], las=2, col="pink", ylim = c(-1, 1))
+```
+
+```{r}
+#we observe by increasing the number of factor to 6 the results are much better, attaining a var explained of 99.9% for some variables
+facto=principal(data, nfactors=6, rotate="none")
+cbind(facto$loadings, facto$uniquenesses)
+```
+
+```{r}
+fact <- principal(data, factors = 2, rotate="varimax")
+cbind(fact$loadings)
+#we plot the following diagram to observe how each variable is associated with a factor
+# same results were obtained using 4 factors
+fa.diagram(fact$loadings)
+plot(fact)
+```
+
+We can see general health and bad things variables are very well explained by the first factor. In addition, Physical health and income are well explained where the variable Income is related in a negative way. Remember, in PCA (III) we saw that income and physical health were the variables that contributed the most.
+
+
+
+```{r}
+#Exploratory Factorial Analysis
+Afactor<-fa(data,nfactors = 2,fm = "ml",rotate ="varimax")
+print(Afactor,digits = 2,cut = .30,sort=TRUE)
+# with cut=.30, we remove those items that above.30
+#sort=T -> we sort from more important to less important
+# digits is to approximate the number by 2 decimals
+```
+
+In the first column we can see the items that we have. ML1 and ML2 are the factors number 1 and 2. We can observe the results obtained for each item, as well as the communality (h^2), uniqueness and index of complexity. Communality is the proportion of each variable's variance that can be explained by the factors. (check bibliography: FACTOR ANALYSIS | SPSS ANNOTATED OUTPUT)
+
+We see the total proportion of variability explained is 38%. 24% is explained by the second factor and 14% by the first factor. The mean item complexity is 1.3. We observe with the test hypothesis that 2 factors are sufficient.
+
+
+## IV) Clustering
+
+Be careful: here we use same data set as in factor analysis and we scale it.
+
+1) Do we have good data to do a clustering?
+
+First we need to check if our data is susceptible to do a cluster analysis. To do so, we compute a distance matrix. Then, we plot it using fviz_dist function with the euclidean method which is the most common. However, since we have more than a thousand observations we decided to only plot only 150 to be able to interpret the distance matrix graph.
+```{r}
+library(tidyverse)
+library(GGally) # ggplot2-based visualization of correlations
+library(factoextra) # ggplot2-based visualization of pca
+library(cluster)
+library(mclust)
+library(tidyr)
+
+X = scale(data)
+m.distance <- get_dist(data[100:250,], method = "euclidean") #we also can use: "maximum", "manhattan", "canberra", "binary", "minkowski", "pearson", "spearman" or "kendall"
+fviz_dist(m.distance, gradient = list(low = "blue", mid = "white", high = "red"))
+
+```
+
+Choosing only some random rows of the data set we can notice our data is susceptible to make a cluster: we see some observations are highly related whereas others are not related.
+
+2) Estimation of the optimal number of clusters
+
+We plot screeplots using different methods to compute the optimal number which is the one that has the biggest change in the slope of the curve
+
+```{r}
+fviz_nbclust(X, kmeans, method = 'wss')
+fviz_nbclust(X, kmeans, method = 'silhouette')
+#fviz_nbclust(X, kmeans, method = 'gap_stat', k.max = 20)
+
+```
+
+2 is the optimal based on our results using different methods. It is this number since it is the point with the highest change in the slope. 
+6 appeared with bootstrap method (you can run it deleting #) but we think this is too much for only 10 variables.
+
+Now we take 2 centers and the observations as a function of its center
+```{r}
+fit = kmeans(X, centers=2, nstart=100)
+
+groups = fit$cluster
+barplot(table(groups), col="#FF83FA")
+centers=fit$centers
+centers
+
+```
+
+We plot the centers in cluster 1 and 2. The purple bars represent the center of a group, whereas the orange points are the center of all the observations:
+```{r}
+#cluster 1
+i=1  
+bar1=barplot(centers[i,], las=2, col="purple", ylim=c(-2,2), main=paste("Cluster", i,": Group center in purple, global center in orange"))
+points(bar1,y=apply(X, 2, quantile, 0.50),col="orange",pch=19)
+
+#cluster 2
+i=2  
+bar2=barplot(centers[i,], las=2, col="purple", ylim=c(-2,2), main=paste("Cluster", i,": Group center in purple, global center in orange"))
+points(bar2,y=apply(X, 2, quantile, 0.50),col="orange",pch=19)
+```
+
+
+3) The Silhouette plot
+
+The silhouette value in [-1,1] allows us to calculate how similar each observations is with the cluster it is assigned relative to other clusters. 
+Silhouette plots rely on a distance metric and suggest that the data matches its own cluster well.
+
+```{r}
+d <- dist(X, method="euclidean")  
+sil = silhouette(groups, d)
+plot(sil, col=1:2, main="", border=NA)
+summary(sil)
+```
+This metric can have different interpretations depending on the value obtained (check bibliography, Rosok Silhouette analysis):
+- Values close to 1 suggest that the observation is well matched to the assigned cluster
+- Values close to 0 suggest that the observation is borderline matched between two clusters
+- Values close to -1 suggest that the observations may be assigned to the wrong cluster
+
+The values are 0.33 and 0.12 approx.. Hence, the observation is borderline matched between two clusters which corresponds to our results
+
+
+4) Profiles
+
+```{r}
+as.data.frame(X) %>% mutate(cluster=factor(groups), BMI=BMI) %>%
+  ggplot(aes(x = cluster, y = BMI)) + 
+  geom_boxplot(fill="orchid1") +
+  labs(title = "BMI BY CLUSTER", x = "", y = "", col = "")
+
+as.data.frame(X) %>% mutate(cluster=factor(groups), Goodthings=Goodthings) %>%
+  ggplot(aes(x = cluster, y =Goodthings)) + 
+  geom_boxplot(fill="slategray1") +
+  labs(title = "Goodthings BY CLUSTER", x = "", y = "", col = "")
+
+as.data.frame(X) %>% mutate(cluster=factor(groups), Goodthings=Badthings) %>%
+  ggplot(aes(x = cluster, y =Badthings)) + 
+  geom_boxplot(fill="pink") +
+  labs(title = "Badthings BY CLUSTER", x = "", y = "", col = "")
+
+as.data.frame(X) %>% mutate(cluster=factor(groups), Diabetes_012=data$Diabetes_012) %>%
+  ggplot(aes(x = cluster, y =Diabetes_012)) + 
+  geom_boxplot(fill="#836FFF") +
+  labs(title = "Diabetes BY CLUSTER", x = "", y = "", col = "") 
+```
+
+We remark clusters differ depending on the variable. Higher values of Good Things and not having diabetes are in the same cluster, 1, whereas higher values of bad things, higher bmi and diabetes is in cluster 2. To see this in a clearer way we are going to make a clusplot.
+
+5) Clusplot
+
+```{r}
+fviz_cluster(fit, data = X,geom = c("point"), ellipse.type = 'norm', pointsize=1)+theme_minimal()
+```
+
+We can see cluster 1 has those variables considered more "healthy" (physical activity, veggies, lower bmi, no diabetes...). And the contrary happens for the other cluster which answers to our intial question.
+
+
+
+## V) Bibliography
+
+
+‘Factor Analysis | SPSS Annotated Output’. https://stats.oarc.ucla.edu/spss/output/factor-analysis/ (accessed Oct. 31, 2022).
+
+J. Rodin, ‘Cultural and Psychosocial Determinants of Weight Concerns’, Ann. Intern. Med., vol. 119, no. 7_Part_2, pp. 643–645, Oct. 1993, doi: 10.7326/0003-4819-119-7_Part_2-199310011-00003.
+
+J. Rosok, ‘Silhouette analysis | R’. https://campus.datacamp.com/courses/cluster-analysis-in-r/k-means-clustering?ex=9 (accessed Nov. 02, 2022).
+
+M. Usman, S. Ahmed, J. Ferzund, A. Mehmood, and A. Rehman, ‘Using PCA and Factor Analysis for Dimensionality Reduction of Bio-informatics Data’, Int. J. Adv. Comput. Sci. Appl., vol. 8, no. 5, 2017, doi: 10.14569/IJACSA.2017.080551.
+
+K. J. Preacher and R. C. MacCallum, ‘Repairing Tom Swift’s Electric Factor Analysis Machine’, Underst. Stat., vol. 2, no. 1, pp. 13–43, Feb. 2003, doi: 10.1207/S15328031US0201_02.
+
+
